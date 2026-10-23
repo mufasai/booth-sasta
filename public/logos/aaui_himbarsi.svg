@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
+  <image href="/logos/aaui.PNG" x="10" y="25" width="175" height="150" preserveAspectRatio="xMidYMid meet"/>
+  <line x1="200" y1="30" x2="200" y2="170" stroke="#cbd5e1" stroke-width="3" stroke-linecap="round"/>
+  <image href="/logos/himbarsi.PNG" x="215" y="25" width="175" height="150" preserveAspectRatio="xMidYMid meet"/>
+</svg>

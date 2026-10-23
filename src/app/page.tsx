@@ -20,14 +20,12 @@ const N = [
   "Bank Tabungan Negara",
   "CIMB Niaga",
   "Bursa Efek Indonesia",
-  "OCBC Sekuritas",
   "MNC Sekuritas",
   "Panin Bank",
   "Permata Bank",
   "Bank Syariah Nasional",
+  "Bank Sukma Hitamajaya",
   "AAUI",
-  "Himbarsi",
-  "Sompo Insurance",
 ];
 
 const C = ["#1f4e8c", "#c8282f", "#3d9a5b", "#d99a00", "#7b4fa0", "#0f8b9d"];
@@ -49,16 +47,12 @@ const LOGOS: Record<string, string> = {
   "Bank Tabungan Negara": "/logos/btn.PNG",
   "CIMB Niaga": "/logos/cimb.png",
   "Bursa Efek Indonesia": "/logos/idx.png",
-  "OCBC Sekuritas": "/logos/ocbc.PNG",
   "MNC Sekuritas": "/logos/mnc.PNG",
   "Panin Bank": "/logos/panin.png",
   "Permata Bank": "/logos/permata.WEBP",
   "Bank Syariah Nasional": "/logos/Logo_Bank_Syariah_Nasional.svg",
+  "Bank Sukma Hitamajaya": "/logos/sukma.png",
   "AAUI": "/logos/aaui.PNG",
-  "Himbarsi": "/logos/himbarsi.PNG",
-  "Himbansi": "/logos/himbarsi.PNG",
-  "Sompo Insurance": "/logos/sompo.png",
-  "Sompo": "/logos/sompo.png",
 };
 
 const T: Record<"edu" | "inter", [string, string]> = {
@@ -71,8 +65,8 @@ function getInitials(name: string): string {
   return (w[0][0] + (w[1] ? w[1][0] : w[0][1] || "")).toUpperCase();
 }
 
-const STORAGE_KEY = "jff2026_dynamic_votes_v2";
-const HIDDEN_KEY = "jff2026_hidden_booths_v1";
+const STORAGE_KEY = "jff2026_dynamic_votes_v4";
+const HIDDEN_KEY = "jff2026_hidden_booths_v3";
 
 interface VoteData {
   edu: number[];
@@ -86,6 +80,28 @@ function getInitialVotes(): VoteData {
   };
 }
 
+// Calculate rows dynamically based on visible booths and screen type
+function getRows(booths: string[], isMobile: boolean): string[][] {
+  if (booths.length === 0) return [];
+  // Mobile (< 640px): 5 rows of 4 for 20 booths
+  // iPad (landscape & portrait) and Desktop: 3 rows (7 - 7 - 6)
+  const numRows = isMobile ? (booths.length > 15 ? 5 : 4) : 3;
+
+  const rows: string[][] = [];
+  let remaining = [...booths];
+
+  for (let r = 0; r < numRows; r++) {
+    const rowsLeft = numRows - r;
+    const countThisRow = Math.ceil(remaining.length / rowsLeft);
+    if (countThisRow > 0) {
+      rows.push(remaining.slice(0, countThisRow));
+      remaining = remaining.slice(countThisRow);
+    }
+  }
+
+  return rows.filter((r) => r.length > 0);
+}
+
 export default function VotingApp() {
   const [category, setCategory] = useState<"edu" | "inter">("edu");
   const [viewPage, setViewPage] = useState<"vote" | "hasil">("vote");
@@ -97,9 +113,21 @@ export default function VotingApp() {
   const [toastMessage, setToastMessage] = useState<string>("");
   const [showToast, setShowToast] = useState<boolean>(false);
   const [poppingName, setPoppingName] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [isNavVisible, setIsNavVisible] = useState<boolean>(true);
 
   const bubRef = useRef<HTMLDivElement>(null);
   const [bubbleSize, setBubbleSize] = useState<number>(100);
+
+  // Detect mobile vs iPad/desktop
+  useEffect(() => {
+    const checkScreen = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    checkScreen();
+    window.addEventListener("resize", checkScreen);
+    return () => window.removeEventListener("resize", checkScreen);
+  }, []);
 
   // Sync data from Neon (or fallback to localStorage)
   const syncWithServer = useCallback(async () => {
@@ -144,7 +172,7 @@ export default function VotingApp() {
       if (savedHidden) {
         const parsedHidden = JSON.parse(savedHidden);
         if (Array.isArray(parsedHidden)) {
-          setHiddenBooths(parsedHidden);
+          setHiddenBooths(parsedHidden.filter((b) => N.includes(b)));
         }
       }
     } catch (e) {
@@ -207,35 +235,35 @@ export default function VotingApp() {
 
   // Filter visible booths
   const visibleBooths = N.filter((name) => !hiddenBooths.includes(name));
+  const rows = getRows(visibleBooths, isMobile);
 
-  // Dynamic 3-row distribution for visible booths
-  const r1Count = Math.ceil(visibleBooths.length / 3);
-  const r2Count = Math.ceil((visibleBooths.length - r1Count) / 2);
-  const row1 = visibleBooths.slice(0, r1Count);
-  const row2 = visibleBooths.slice(r1Count, r1Count + r2Count);
-  const row3 = visibleBooths.slice(r1Count + r2Count);
-
-  // Responsive bubble layout calculator
+  // Responsive bubble layout calculator (iPad 10th Gen & Mobile optimized)
   const updateBubbleLayout = useCallback(() => {
     if (!bubRef.current) return;
     const w = bubRef.current.clientWidth;
     const h = bubRef.current.clientHeight;
 
-    const maxCols = Math.max(row1.length, row2.length, row3.length, 1);
-    const rowCount = [row1, row2, row3].filter((r) => r.length > 0).length || 1;
+    const maxCols = Math.max(...rows.map((r) => r.length), 1);
+    const rowCount = Math.max(rows.length, 1);
+    const gap = isMobile ? 6 : 8;
+
+    // iPad 10th Gen has 820px (portrait) and 1180px (landscape).
+    // Maximum bubble size ~112px on iPad landscape, and ~100px on iPad portrait!
+    // On mobile (< 640px), max bubble size is ~66px.
+    const maxAllowed = isMobile ? 66 : 115;
 
     const computed = Math.max(
-      36,
+      34,
       Math.floor(
         Math.min(
-          (w - (maxCols - 1) * 8) / maxCols,
-          (h - (rowCount - 1) * 8) / rowCount,
-          140
+          (w - (maxCols - 1) * gap) / maxCols,
+          (h - (rowCount - 1) * gap) / rowCount,
+          maxAllowed
         )
       )
     );
     setBubbleSize(computed);
-  }, [row1.length, row2.length, row3.length]);
+  }, [rows, isMobile]);
 
   useEffect(() => {
     updateBubbleLayout();
@@ -296,7 +324,7 @@ export default function VotingApp() {
 
   // Export CSV
   const handleExportCSV = () => {
-    const rows = [
+    const rowsData = [
       ["No", "Nama Booth", "Suara Teredukatif", "Suara Terinteraktif", "Total", "Status"],
       ...N.map((name, i) => [
         i + 1,
@@ -307,7 +335,7 @@ export default function VotingApp() {
         hiddenBooths.includes(name) ? "Disembunyikan" : "Aktif",
       ]),
     ];
-    const csvContent = rows.map((e) => e.join(",")).join("\n");
+    const csvContent = rowsData.map((e) => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -373,7 +401,7 @@ export default function VotingApp() {
             <small
               style={{
                 fontSize: `${Math.max(9, Math.round(bubbleSize * 0.1))}px`,
-                display: bubbleSize >= 80 ? "-webkit-box" : "none",
+                display: bubbleSize >= 75 ? "-webkit-box" : "none",
               }}
             >
               {name}
@@ -387,7 +415,7 @@ export default function VotingApp() {
   return (
     <>
       <div id="root-container">
-        {/* Header Card (Clean & Compact) */}
+        {/* Header Card (Clean, Compact, Safely Below Banner) */}
         <div className="hd">
           <h1>{viewPage === "hasil" ? `Hasil ${T[category][0]}` : T[category][0]}</h1>
           <p>
@@ -404,7 +432,7 @@ export default function VotingApp() {
               <div
                 style={{
                   textAlign: "center",
-                  padding: "36px 24px",
+                  padding: "32px 20px",
                   background: "var(--card)",
                   borderRadius: "20px",
                   margin: "auto",
@@ -450,28 +478,11 @@ export default function VotingApp() {
                 </button>
               </div>
             ) : (
-              <>
-                {/* Row 1 */}
-                {row1.length > 0 && (
-                  <div className="rw">
-                    {row1.map((name) => renderBubble(name))}
-                  </div>
-                )}
-
-                {/* Row 2 */}
-                {row2.length > 0 && (
-                  <div className="rw">
-                    {row2.map((name) => renderBubble(name))}
-                  </div>
-                )}
-
-                {/* Row 3 */}
-                {row3.length > 0 && (
-                  <div className="rw">
-                    {row3.map((name) => renderBubble(name))}
-                  </div>
-                )}
-              </>
+              rows.map((row, rowIdx) => (
+                <div key={`row-${rowIdx}`} className="rw">
+                  {row.map((name) => renderBubble(name))}
+                </div>
+              ))
             )}
           </div>
         )}
@@ -509,7 +520,7 @@ export default function VotingApp() {
                     cursor: "pointer",
                   }}
                 >
-                  Kelola Booth ({visibleBooths.length}/{N.length})
+                  Kelola ({visibleBooths.length}/{N.length})
                 </button>
                 <button
                   onClick={handleExportCSV}
@@ -593,8 +604,19 @@ export default function VotingApp() {
         )}
       </div>
 
-      {/* Single Bottom Navigation Bar */}
-      <div className="nav" id="nav">
+      {/* Floating Expand Button when Nav is Hidden */}
+      {!isNavVisible && (
+        <button
+          className="nav-expand-btn"
+          onClick={() => setIsNavVisible(true)}
+          title="Tampilkan menu navigasi"
+        >
+          ▲ Menu Navigasi
+        </button>
+      )}
+
+      {/* Single Bottom Navigation Bar (Docked low & Collapsible) */}
+      <div className={`nav ${!isNavVisible ? "is-hidden" : ""}`} id="nav">
         <button
           aria-pressed={category === "edu" && viewPage === "vote"}
           onClick={() => {
@@ -643,6 +665,14 @@ export default function VotingApp() {
         </button>
         <i className="sep" />
         <button onClick={toggleFullscreen}>Layar penuh</button>
+        <i className="sep" />
+        <button
+          className="nav-toggle-btn"
+          onClick={() => setIsNavVisible(false)}
+          title="Sembunyikan bilah navigasi"
+        >
+          ▼ Tutup
+        </button>
       </div>
 
       {/* Modal Kelola Booth */}
