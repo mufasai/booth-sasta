@@ -247,10 +247,10 @@ export default function VotingApp() {
     const rowCount = Math.max(rows.length, 1);
     const gap = isMobile ? 6 : 8;
 
-    // iPad 10th Gen has 820px (portrait) and 1180px (landscape).
-    // Maximum bubble size ~112px on iPad landscape, and ~100px on iPad portrait!
-    // On mobile (< 640px), max bubble size is ~66px.
-    const maxAllowed = isMobile ? 66 : 115;
+    // iPad 10th Gen (820px portrait, 1180px landscape):
+    // Maximum bubble size ~94px ensures circles do not dominate the background
+    // and logo images inside sit with clean, balanced white margins.
+    const maxAllowed = isMobile ? 60 : 94;
 
     const computed = Math.max(
       34,
@@ -388,6 +388,9 @@ export default function VotingApp() {
           height: `${bubbleSize}px`,
           background: logoUrl ? "#ffffff" : C[idx >= 0 ? idx % 6 : 0],
           borderColor: logoUrl ? C[idx >= 0 ? idx % 6 : 0] : "#ffffff",
+          borderWidth: "3px",
+          borderStyle: "solid",
+          backgroundClip: "padding-box",
         }}
         aria-label={`Pilih ${name}`}
       >

@@ -140,7 +140,7 @@ body {
 
 /* Bubble Button */
 .b {
-  border: 3px solid #fff;
+  border: 3px solid #1f4e8c;
   border-radius: 50%;
   color: #fff;
   display: flex;
@@ -151,10 +151,15 @@ body {
   font: inherit;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
-  overflow: hidden;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  transition: transform 0.15s ease, filter 0.15s ease;
+  /* Eliminating overflow:hidden removes WebKit 4-quadrant bezier clipping seams (white dots bug) */
+  background-clip: padding-box;
+  -webkit-background-clip: padding-box;
+  box-sizing: border-box;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
+  transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
   position: relative;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
 }
 
 .b:hover {
@@ -162,10 +167,11 @@ body {
 }
 
 .b img {
-  width: 72%;
-  height: 72%;
+  width: 66%;
+  height: 66%;
   object-fit: contain;
   pointer-events: none;
+  transition: transform 0.15s ease;
 }
 
 .b span {
@@ -189,11 +195,11 @@ body {
 
 .b.has-logo {
   background: #ffffff !important;
-  box-shadow: 0 4px 14px rgba(31, 78, 140, 0.18);
+  box-shadow: 0 3px 12px rgba(31, 78, 140, 0.14);
 }
 
 .b.has-logo:hover {
-  box-shadow: 0 6px 18px rgba(31, 78, 140, 0.28);
+  box-shadow: 0 6px 18px rgba(31, 78, 140, 0.22);
 }
 
 /* Click Pop Animation */
