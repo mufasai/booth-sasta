@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { fetchLiveVotes } from "@/app/actions/voting";
 
 export async function GET(request: Request) {
-  // Accessing request URL ensures this route runs dynamically on each request
-  const _url = request.url;
-  const data = await fetchLiveVotes();
+  const { searchParams } = new URL(request.url);
+  const period = searchParams.get("period") || "all";
+  const data = await fetchLiveVotes(period);
   return NextResponse.json(data);
 }

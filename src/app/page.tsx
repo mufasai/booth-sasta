@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import confetti from "canvas-confetti";
-import { fetchLiveVotes, submitVote, resetDatabaseVotes } from "@/app/actions/voting";
+import { fetchLiveVotes, submitVote } from "@/app/actions/voting";
 
 const N = [
   "Bank Mandiri",
@@ -65,8 +65,25 @@ function getInitials(name: string): string {
   return (w[0][0] + (w[1] ? w[1][0] : w[0][1] || "")).toUpperCase();
 }
 
-const STORAGE_KEY = "jff2026_dynamic_votes_v4";
-const HIDDEN_KEY = "jff2026_hidden_booths_v3";
+function formatTanggalIndo(dateStr: string): string {
+  if (!dateStr) return "";
+  try {
+    const parts = dateStr.split("-").map(Number);
+    if (parts.length !== 3) return dateStr;
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    return date.toLocaleDateString("id-ID", {
+      weekday: "long",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch (_) {
+    return dateStr;
+  }
+}
+
+const STORAGE_KEY = "jff2026_dynamic_votes_v5";
+const HIDDEN_KEY = "jff2026_hidden_booths_v4";
 
 interface VoteData {
   edu: number[];
@@ -83,8 +100,8 @@ function getInitialVotes(): VoteData {
 // Calculate rows dynamically based on visible booths and screen type
 function getRows(booths: string[], isMobile: boolean): string[][] {
   if (booths.length === 0) return [];
-  // Mobile (< 640px): 5 rows of 4 for 20 booths
-  // iPad (landscape & portrait) and Desktop: 3 rows (7 - 7 - 6)
+  // Mobile (< 640px): 5 rows of 4-5
+  // iPad (landscape & portrait) and Desktop: 3 rows (7 - 7 - 7 for 21 booths)
   const numRows = isMobile ? (booths.length > 15 ? 5 : 4) : 3;
 
   const rows: string[][] = [];
@@ -116,8 +133,15 @@ export default function VotingApp() {
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [isNavVisible, setIsNavVisible] = useState<boolean>(true);
 
+  // Rekap Feature State (All, Today, Yesterday, Tomorrow, or Custom Date)
+  const [rekapPeriod, setRekapPeriod] = useState<string>("all");
+  const [customDate, setCustomDate] = useState<string>("");
+  const [serverToday, setServerToday] = useState<string>("");
+  const [serverYesterday, setServerYesterday] = useState<string>("");
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
+
   const bubRef = useRef<HTMLDivElement>(null);
-  const [bubbleSize, setBubbleSize] = useState<number>(100);
+  const [bubbleSize, setBubbleSize] = useState<number>(94);
 
   // Detect mobile vs iPad/desktop
   useEffect(() => {
@@ -129,23 +153,30 @@ export default function VotingApp() {
     return () => window.removeEventListener("resize", checkScreen);
   }, []);
 
-  // Sync data from Neon (or fallback to localStorage)
-  const syncWithServer = useCallback(async () => {
+  // Sync data from Neon (or fallback to localStorage) with active filter
+  const syncWithServer = useCallback(async (periodToFetch?: string) => {
+    const targetPeriod = periodToFetch !== undefined ? periodToFetch : (viewPage === "hasil" ? rekapPeriod : "all");
     try {
-      const res = await fetchLiveVotes();
+      const res = await fetchLiveVotes(targetPeriod);
       if (res.isNeonConnected) {
         setIsNeonConnected(true);
         const newEdu = N.map((name) => res.edu[name] || 0);
         const newInter = N.map((name) => res.inter[name] || 0);
         setVotes({ edu: newEdu, inter: newInter });
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({ edu: newEdu, inter: newInter }));
-        } catch (_) {}
+        if (res.serverToday) setServerToday(res.serverToday);
+        if (res.serverYesterday) setServerYesterday(res.serverYesterday);
+        if (res.availableDates) setAvailableDates(res.availableDates);
+
+        if (targetPeriod === "all") {
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ edu: newEdu, inter: newInter }));
+          } catch (_) {}
+        }
       }
     } catch (e) {
       console.error("Live sync error", e);
     }
-  }, []);
+  }, [viewPage, rekapPeriod]);
 
   // Load votes & hidden list on mount & set up live polling
   useEffect(() => {
@@ -183,19 +214,11 @@ export default function VotingApp() {
     syncWithServer();
 
     // 3. Poll every 3.5 seconds for real-time multi-device sync
-    const interval = setInterval(syncWithServer, 3500);
+    const interval = setInterval(() => {
+      syncWithServer();
+    }, 3500);
     return () => clearInterval(interval);
   }, [syncWithServer]);
-
-  // Save votes to localStorage whenever updated
-  const saveVotes = (updated: VoteData) => {
-    setVotes(updated);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
   // Toast notification
   const triggerToast = useCallback((msg: string) => {
@@ -286,7 +309,7 @@ export default function VotingApp() {
         i === idx ? count + 1 : count
       ),
     };
-    saveVotes(nextVotes);
+    setVotes(nextVotes);
 
     // Save to Neon PostgreSQL
     submitVote(category, boothName).then((res) => {
@@ -322,17 +345,30 @@ export default function VotingApp() {
     }
   };
 
-  // Export CSV
+  // Helper label for active recap period
+  const getPeriodLabel = (period: string): string => {
+    if (period === "all") return "Akumulasi Seluruh Hari Festival";
+    if (period === "today") return `Hari Ini (${serverToday ? formatTanggalIndo(serverToday) : "Hari Ini"})`;
+    if (period === "yesterday") return `Kemarin (${serverYesterday ? formatTanggalIndo(serverYesterday) : "Kemarin"})`;
+    if (period === "tomorrow") return "Besok";
+    return `Tanggal ${formatTanggalIndo(period)}`;
+  };
+
+  // Export CSV based on currently selected recap period
   const handleExportCSV = () => {
+    const periodName = rekapPeriod === "all" ? "Semua_Hari" : rekapPeriod;
     const rowsData = [
-      ["No", "Nama Booth", "Suara Teredukatif", "Suara Terinteraktif", "Total", "Status"],
-      ...N.map((name, i) => [
+      ["Rekap Hasil Voting Jakarta Financial Festival 2026"],
+      [`Kategori`, `"${T[category][0]}"`],
+      [`Periode Rekap`, `"${getPeriodLabel(rekapPeriod)}"`],
+      [`Waktu Ekspor`, `"${new Date().toLocaleString("id-ID")}"`],
+      [],
+      ["Peringkat", "Nama Booth", "Jumlah Suara", "Status"],
+      ...rankedResults.map((item, i) => [
         i + 1,
-        `"${name}"`,
-        votes.edu[i],
-        votes.inter[i],
-        votes.edu[i] + votes.inter[i],
-        hiddenBooths.includes(name) ? "Disembunyikan" : "Aktif",
+        `"${item.name}"`,
+        item.votes,
+        hiddenBooths.includes(item.name) ? "Disembunyikan" : "Aktif",
       ]),
     ];
     const csvContent = rowsData.map((e) => e.join(",")).join("\n");
@@ -340,21 +376,10 @@ export default function VotingApp() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Hasil_Voting_JFF2026_${category}.csv`;
+    a.download = `Rekap_Voting_JFF2026_${category}_${periodName}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  // Reset votes
-  const handleReset = async () => {
-    if (window.confirm("Apakah Anda yakin ingin me-reset semua suara menjadi 0?")) {
-      const empty = getInitialVotes();
-      saveVotes(empty);
-      if (isNeonConnected) {
-        await resetDatabaseVotes();
-      }
-      triggerToast("Semua suara telah di-reset ke 0.");
-    }
+    triggerToast(`Rekap CSV (${getPeriodLabel(rekapPeriod)}) berhasil diunduh.`);
   };
 
   // Results calculation (only visible booths in active leaderboard)
@@ -420,10 +445,10 @@ export default function VotingApp() {
       <div id="root-container">
         {/* Header Card (Clean, Compact, Safely Below Banner) */}
         <div className="hd">
-          <h1>{viewPage === "hasil" ? `Hasil ${T[category][0]}` : T[category][0]}</h1>
+          <h1>{viewPage === "hasil" ? `Rekap ${T[category][0]}` : T[category][0]}</h1>
           <p>
             {viewPage === "hasil"
-              ? "Perolehan suara terakumulasi langsung secara dinamis."
+              ? `Hasil perolehan suara resmi Jakarta Financial Festival 2026.`
               : `${T[category][1]} Ketuk logo untuk memilih.`}
           </p>
         </div>
@@ -490,12 +515,77 @@ export default function VotingApp() {
           </div>
         )}
 
-        {/* Results View */}
+        {/* Results / Rekap View */}
         {viewPage === "hasil" && (
           <div className="res">
+            {/* Rekap Period Filter Bar */}
+            <div className="rekap-bar">
+              <div className="rekap-tabs-row">
+                <div className="rekap-tabs">
+                  <button
+                    type="button"
+                    className={`rekap-tab ${rekapPeriod === "all" ? "active" : ""}`}
+                    onClick={() => {
+                      setRekapPeriod("all");
+                      syncWithServer("all");
+                    }}
+                  >
+                    Semua Hari
+                  </button>
+                  <button
+                    type="button"
+                    className={`rekap-tab ${rekapPeriod === "today" ? "active" : ""}`}
+                    onClick={() => {
+                      setRekapPeriod("today");
+                      syncWithServer("today");
+                    }}
+                  >
+                    Hari Ini
+                  </button>
+                  <button
+                    type="button"
+                    className={`rekap-tab ${rekapPeriod === "yesterday" ? "active" : ""}`}
+                    onClick={() => {
+                      setRekapPeriod("yesterday");
+                      syncWithServer("yesterday");
+                    }}
+                  >
+                    Kemarin
+                  </button>
+                </div>
+
+                <div className="rekap-date-picker">
+                  <label htmlFor="rekap-custom-date">Pilih Hari:</label>
+                  <input
+                    id="rekap-custom-date"
+                    type="date"
+                    className="rekap-date-input"
+                    value={customDate}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomDate(val);
+                      if (val) {
+                        setRekapPeriod(val);
+                        syncWithServer(val);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="rekap-info-row">
+                <span>
+                  Periode Rekap: <strong>{getPeriodLabel(rekapPeriod)}</strong>
+                </span>
+                <span>
+                  Total Terkumpul: <strong>{totalVotes} suara</strong>
+                </span>
+              </div>
+            </div>
+
             <div className="tot">
               <div>
-                <span>Total suara: {totalVotes}</span>
+                <span>Perolehan Suara: {totalVotes}</span>
                 {hiddenBooths.length > 0 && (
                   <span
                     style={{
@@ -511,6 +601,7 @@ export default function VotingApp() {
               </div>
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                 <button
+                  type="button"
                   onClick={() => setIsManageModalOpen(true)}
                   style={{
                     background: "none",
@@ -526,6 +617,7 @@ export default function VotingApp() {
                   Kelola ({visibleBooths.length}/{N.length})
                 </button>
                 <button
+                  type="button"
                   onClick={handleExportCSV}
                   style={{
                     background: "none",
@@ -538,71 +630,64 @@ export default function VotingApp() {
                     cursor: "pointer",
                   }}
                 >
-                  Export CSV
-                </button>
-                <button
-                  onClick={handleReset}
-                  style={{
-                    background: "none",
-                    border: "1px solid #ffccd0",
-                    borderRadius: "6px",
-                    padding: "3px 8px",
-                    fontSize: "11px",
-                    fontWeight: "700",
-                    color: "#c8282f",
-                    cursor: "pointer",
-                  }}
-                >
-                  Reset
+                  Export CSV ({rekapPeriod === "all" ? "Semua" : rekapPeriod === "today" ? "Hari Ini" : rekapPeriod === "yesterday" ? "Kemarin" : "Periode"})
                 </button>
               </div>
             </div>
 
-            {rankedResults.map((item, k) => {
-              const widthPct = maxVotes > 0 ? (item.votes / maxVotes) * 100 : 0;
-              const barColor =
-                k === 0
-                  ? "#d99a00"
-                  : k === 1
-                  ? "#1f4e8c"
-                  : k === 2
-                  ? "#3d9a5b"
-                  : "#9db3d6";
+            {totalVotes === 0 ? (
+              <div className="rekap-empty">
+                <div style={{ fontSize: "28px", marginBottom: "6px" }}>📭</div>
+                <h4>Belum Ada Suara Tercatat</h4>
+                <p>Tidak ada perolehan suara untuk {getPeriodLabel(rekapPeriod)}.</p>
+              </div>
+            ) : (
+              rankedResults.map((item, k) => {
+                const widthPct = maxVotes > 0 ? (item.votes / maxVotes) * 100 : 0;
+                const barColor =
+                  k === 0
+                    ? "#d99a00"
+                    : k === 1
+                    ? "#1f4e8c"
+                    : k === 2
+                    ? "#3d9a5b"
+                    : "#9db3d6";
 
-              return (
-                <div key={item.name} className="row">
-                  <div className="rk">{k + 1}</div>
-                  <div className="bar">
-                    <div
-                      className="fill"
-                      style={{
-                        width: `${Math.max(widthPct, item.votes > 0 ? 3 : 0)}%`,
-                        background: barColor,
-                      }}
-                    />
-                    <span className="bn" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                      {LOGOS[item.name] && (
-                        <img
-                          src={LOGOS[item.name]}
-                          alt=""
-                          style={{
-                            height: "18px",
-                            width: "18px",
-                            objectFit: "contain",
-                            borderRadius: "4px",
-                            background: "#fff",
-                            padding: "1px",
-                            verticalAlign: "middle",
-                          }}
-                        />
-                      )}
-                      {item.name}
-                    </span>
+                return (
+                  <div key={item.name} className="row">
+                    <div className="rk">{k + 1}</div>
+                    <div className="bar">
+                      <div
+                        className="fill"
+                        style={{
+                          width: `${Math.max(widthPct, item.votes > 0 ? 3 : 0)}%`,
+                          background: barColor,
+                        }}
+                      />
+                      <span className="bn" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        {LOGOS[item.name] && (
+                          <img
+                            src={LOGOS[item.name]}
+                            alt=""
+                            style={{
+                              height: "18px",
+                              width: "18px",
+                              objectFit: "contain",
+                              borderRadius: "4px",
+                              background: "#fff",
+                              padding: "1px",
+                              verticalAlign: "middle",
+                            }}
+                          />
+                        )}
+                        {item.name}
+                      </span>
+                    </div>
+                    <div className="rv">{item.votes}</div>
                   </div>
-                  <div className="rv">{item.votes}</div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         )}
       </div>
